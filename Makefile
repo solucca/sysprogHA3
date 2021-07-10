@@ -1,54 +1,56 @@
+# Compile flags
 CC = gcc
-CFLAGS = -g -Wall -std=c11
+CFLAGS = -Wall -std=c11 -g
 INCL_DIR = include
 CPPFLAGS = -I$(INCL_DIR)
 
-EXEC = theChat
-LSG_EXEC = musterloesung
-
-LSG_OBJ_DIR = obj_lsg
-OBJ_DIR = obj
+# Folders
 SRC_DIR = src
+OBJ_DIR = obj
+TEST_DIR = tests
+TEST_OUTPUT_DIR = $(TEST_DIR)/output
 
-OBJ = $(OBJ_DIR)/list.o
-OBJ += $(OBJ_DIR)/main.o
-OBJ += $(OBJ_DIR)/output.o
+SRC = filetree.c \
+      os_malloc.c
 
-ABGABE_OBJ = $(OBJ_DIR)/kitchen.o
-ABGABE_OBJ += $(OBJ_DIR)/parseLine.o
-ABGABE_OBJ += $(OBJ_DIR)/readData.o
-ABGABE_OBJ += $(OBJ_DIR)/serve.o
+EXEC = dos_os
 
-LSG_OBJ = $(subst $(OBJ_DIR),$(LSG_OBJ_DIR),$(ABGABE_OBJ))
+TESTS_SRC = $(wildcard $(TEST_DIR)/test_*.c)
+TESTS_ELF = $(basename $(notdir $(TESTS_SRC)))
+OBJ = $(addprefix $(OBJ_DIR)/, $(SRC:.c=.o))
 
+.PHONY: all run clean submission
 
-.PHONY: all clean submission
+all: $(EXEC)
 
-all: $(EXEC) $(LSG_EXEC)
+$(EXEC): $(OBJ) $(SRC_DIR)/main.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $^ -o $@
 
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
-	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ -c $< 
+run: all
+	./$(EXEC)
 
-$(EXEC): $(ABGABE_OBJ) $(OBJ)
-	$(CC) -o $@ $^
+$(OBJ): $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) $(CPPFLAGS) -o $@ -c $<
 
-$(LSG_EXEC): $(LSG_OBJ) $(OBJ)
-	$(CC) -o $@ $^
+.PHONY: $(TESTS_ELF) tests_filetree_all tests_malloc_all tests_all
+$(TESTS_ELF): %: $(TEST_DIR)/%.c $(OBJ)
+	@mkdir -p $(TEST_OUTPUT_DIR)
+	$(CC) $(CFLAGS) $(CPPFLAGS) $^ -o $(TEST_OUTPUT_DIR)/$@
+	./$(TEST_OUTPUT_DIR)/$@ > $(TEST_OUTPUT_DIR)/$@.txt
+	@echo ""
+	@echo ">>> Test output written to $(TEST_OUTPUT_DIR)/$@.txt"
 
-test_kitchen: $(subst $(LSG_OBJ_DIR)/kitchen.o,$(OBJ_DIR)/kitchen.o,$(LSG_OBJ)) $(OBJ)
-	$(CC) -o $@ $^
-
-test_parseLine: $(subst $(LSG_OBJ_DIR)/parseLine.o,$(OBJ_DIR)/parseLine.o,$(LSG_OBJ)) $(OBJ)
-	$(CC) -o $@ $^
-
-test_readData: $(subst $(LSG_OBJ_DIR)/readData.o,$(OBJ_DIR)/readData.o,$(LSG_OBJ)) $(OBJ)
-	$(CC) -o $@ $^
-
-test_serve: $(subst $(LSG_OBJ_DIR)/serve.o,$(OBJ_DIR)/serve.o,$(LSG_OBJ)) $(OBJ)
-	$(CC) -o $@ $^
-
-submission:
-	zip Abgabe.zip $(SRC_DIR)/kitchen.c $(SRC_DIR)/parseLine.c $(SRC_DIR)/readData.c $(SRC_DIR)/serve.c
+tests_filetree_all: $(filter test_filetree_%, $(TESTS_ELF))
+tests_malloc_all: $(filter test_malloc_%, $(TESTS_ELF))
+tests_all: $(TESTS_ELF)
 
 clean:
-	rm -rf $(EXEC) $(LSG_EXEC) $(ABGABE_OBJ) $(OBJ) test_* Abgabe.zip
+	rm -rf dos_os
+	rm -rf abgabe.zip
+	rm -rf $(OBJ_DIR)
+	rm -rf $(TEST_OUTPUT_DIR)
+
+submission:
+	zip abgabe.zip $(addprefix $(SRC_DIR)/, $(SRC))
+

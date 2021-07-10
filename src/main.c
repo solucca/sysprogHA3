@@ -1,145 +1,316 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-#include "kitchen.h"
-#include "parse.h"
-#include "output.h"
-#include "serve.h"
+#include <filetree.h>
+#include <os_malloc.h>
 
-/**
- * This function is the heart and soul of the program. It will be called in every iteration of the while loop in main(). Consisting of two main parts
- * it checks for new orders to be cooked at first. Then it iterates over all customers and depending on the current stage of their visit it will either call serveCustomer()
- * if the customer needs active serving (needs to be seated, wants to order or wants to pay), or it will determine if the customer has waited long enough to enter the next stage.
- *
- * @param res Pointer to the restaurant that is being managed
- * @param currentTime the current tick
-**/
-
-void updateTick(restaurant *res, int currentTime) {
-
-   //call cooking_queue_next_HRRN() to determine the customerParty with the highest RR out of everyone who ordered.
-    customerParty *next = cooking_queue_next_HRRN(res, currentTime);
-    //check repeatedly if their is an order that isn't being prepared yet and if we have a chef available
-    //if yes, save the current time as "startCooking" timeStamp for the customer and move them to next stage, also reduce available chefs by one
-    while (res->availableChefs > 0 && next != NULL) {
-        next->stamps[COOKING] = currentTime;
-        next->currentStage++;
-        res->availableChefs--;
-        next = cooking_queue_next_HRRN(res, currentTime);
-    }
+#ifdef USE_MY_MALLOC
+#define MEM_SIZE (1024)
+static char mem[MEM_SIZE] __attribute__((aligned(8)));
+#endif
 
 
-    //iterate over all customers
-    customerParty *customer = res->guests->first;
-    while (customer != NULL) {
-        int removed = 0; // needed to determine if list removed was called in the while-loop
+#define MAX_STR 255
 
+// color escape sequences
+#define GRN "\e[1;32m"
+#define BLU "\e[1;34m"
+#define RESET "\x1B[0m"
 
-        if (customer->currentStage == NOT_ARRIVED) { //if customer didn't arrive yet
-            if (customer->stamps[ARRIVED] == currentTime) { //check if customer arrived
-                customer->currentStage++; //move to next stage
-            }
+// hash codes
+#define help 6385292014
+#define quit 6385632776
 
-        } else if (customer->currentStage == ARRIVED || customer->currentStage == DECIDED ||
-                    customer->currentStage == EATEN) { //the customer needs to be served
-            int status = serveCustomer(customer, res);
-            if (status != -1) { //if customer has been served successfully go to next stage and save the timestamp for entering that stage
-                customer->currentStage++;
-                customer->stamps[customer->currentStage] = currentTime; //set SEATED/ORDERED/PAYED timestamp
-            }
-        } else if (customer->currentStage == PAYED) { //if a customer has payed remove him from the list but remember his successor
-            customerParty *tmp = customer;
-            customer = customer->next;
-            listRemove(res->guests, tmp);
-            removed = 1;
+#define ls 5863588
+#define mkdir 210720772860
+#define mkfile 6953785576157
+#define cd 5863276
+#define rm 5863780
+#define mv 5863624
+#define print 210724587794
+#define find 6385224550
 
-        } else if (customer->currentStage == SEATED || customer->currentStage == SERVED || customer->currentStage ==
-                                                                                           COOKING) {// The customer does not need serving and is busy/waiting SEATED/SERVED/COOKING*/
-            int timeSinceLastStage = currentTime - customer->stamps[customer->currentStage]; //find out how long the customer is in his current stage
+void intro();
+void terminal_line();
 
-            int busytime;
-            switch (customer->currentStage) { //depending on his stage determine how long he should be in that stage
+void help_f();
+void quit_f();
 
-                case SEATED: //if customer is seated and is now choosing he needs two ticks
-                    busytime = 2;
-                    break;
-                case COOKING: //a customer whos order is being prepared needs to wait until that preparation is done
-                    busytime = getPrepTime(customer->order, customer->groupSize);
-                    break;
-                case SERVED: //4 ticks needed for eating
-                    busytime = 4;
-                    break;
-                case ORDERED: //waiting for the kitchen to start cooking
-                    busytime = -1;
-                    break;
-                default:
-                    perror("Invalid restaurant state.");
-                    exit(-1);
-            }
+void filetree_ss();
+void add_dir_str(char* str);
+void remove_last_dir();
+void name_error(char* cmd_name, char* name);
+void path_error(char* cmd_name, char* path);
+Node* func_find(char *name);
 
-            if (busytime == timeSinceLastStage) { // if customer has waited long enough go into next stage
-                if (customer->currentStage == COOKING) { //if customer has been served, make one chef available again
-                    res->availableChefs++;
-                }
-                customer->currentStage++;
-                customer->stamps[customer->currentStage] = currentTime; //set CHOSEN/EATEN timestamp
+int get_input(char input[]);
 
-            }
-        }
-        if (!removed) { //if listRemove() hasn't been called this iteration we still need to get the successor of current element
-            customer = customer->next;
-        }
+const unsigned long hash(const char*str){
+	unsigned long hash = 5381;
+	int c;
 
-    }
+	while ((c = *str++))
+		hash = ((hash << 5) + hash) + c;
+	return hash;
+}
+
+char* loc = "main";
+char dir[256] = "/";
+Tree* t = NULL;
+Directory* cur_dir = NULL;
+
+int main(int argc, char* argv[]){
+	#ifdef USE_MY_MALLOC
+	os_init(mem, MEM_SIZE, FIRST_FIT);
+	#endif
+	loc = "filetree";
+	filetree_ss();
+}
+
+int get_input(char input[]){
+	char line[MAX_STR];
+	char *pos;
+	int length;
+	terminal_line();
+	if(fgets(line, MAX_STR, stdin)!=NULL){
+		if((pos = strchr(line, '\n')) != NULL)
+			*pos = '\0';
+
+		length = strlen(line);
+		strncpy(input, line, length);
+		input[length] = '\0';
+		return 0;
+	}
+	return -1;
+}
+
+void terminal_line(){
+	printf(GRN"dos@%s"RESET":"BLU"%s"RESET"$ ", loc, dir);
+}
+
+void add_dir_str(char* str){
+	int len = strlen(dir);
+	dir[len] = '/';
+	strcpy(&dir[len+1], str);
+}
+
+void remove_last_dir(){
+	char* pos = strrchr(dir, '/');
+	if(!pos)
+		return;
+
+	dir[pos-dir] = '\0';
 
 }
 
-meal pasta = {"Spaghetti", 12, 9};
-meal chirashi = {"Chirashi", 5, 12};
-meal rippchen = {"Rippchen", 12, 13};
-meal kaiserschmarrn = {"Kaiserschmarrn", 30, 7};
+char* status = "SUCCESS";
+char* percent = "99";
 
-/**
- *
- *
- * @return
- */
-int main(int argc, char** argv) {
-
-    if(argc != 2){
-        printf("\nUsage: ./binary path/to/input/file\n");
-        return -1;
-    }
-
-    meal *menu[] = {
-            &pasta, &chirashi, &rippchen, &kaiserschmarrn,
-    };
-
-    int time = 0;
-    linkedList list = {NULL, NULL};
-    restaurant theChat = {0, 0, &list, NULL, 5, menu, 3};
-    theChat.tables = calloc(theChat.tableCount, sizeof(customerParty *));
-    int guestCount = readData(argv[1], &list, theChat.menu); //added back ../
-
-
-    printf("%-*s", 7, "TIME");
-    for (int i = 0; i < theChat.tableCount; ++i) {
-        printf("%-*d", 20, i);
-    }
-    printf("%-*s\n", 20, "PROFIT");
-
-    while (theChat.guests->first != NULL) {
-        updateTick(&theChat, time);
-        printCurrentTick(&theChat, time);
-
-        time++;
-//        usleep( 200 *1000); //sleep 200 ms
-    }
-    printSummary(&theChat, time, guestCount);
-
-    free(theChat.tables);
-
-
+void intro(){
+	printf(
+	"            _______________________    \n"       
+	"           |\\____________________/|\\ \n"
+	"           ||                     || \\ \n"
+	"           || "GRN"> LOADING DOS OS "RESET"   ||  \\ \n"
+	"           ||                     ||   | \n"
+	"           || "GRN"> [             ]"RESET"   ||   | \n"
+	"           || "GRN">  %s%% COMPLETE"RESET"     ||   | \n"
+	"           || "GRN">  %s"RESET"          ||   | \n"
+	"           ||_____________________|| _// \n"
+	"           |/_____________________\\|_// \n"
+	"            __\\___________________// \n"
+	"         __/e*/**/**/**/?*<#//***//||\n"
+	"        /#***/#######/****#//***//_||\n"
+	"\n", percent, status);
+	printf(GRN"TERMINAL START\n");
+	printf("Type 'quit' to quit and 'help' to see available commands"RESET"\n");
 }
+
+void help_f(){
+	printf(
+	"available commands:\n"
+	"ls                           cd [path]\n" 		
+	"rm [path]                    mkfile [name]\n"
+	"print [filename]             mv [source] [destination]\n"
+	"find [filter name]           mkdir [name]\n");	
+}
+
+void quit_f(){
+	printf("quitting\n");
+	filetree_destroy(t);
+	exit(0);
+}
+
+void fat_ss(){
+	puts("fat");
+}
+
+void name_error(char *cmd_name, char* arg){
+	if(!arg)
+		printf("usage: %s, [%s]\n", cmd_name, arg);
+	
+}
+
+void path_error(char* cmd_name, char* path){
+	if(!path)
+		printf("usage: %s, [path], path is absolute or relative, consists of directory names separated by '/'\n", cmd_name);
+}
+
+
+Node* func_find(char* name){
+	Node* node_to_find = NULL;
+	FileError e;
+	e = filetree_resolve_path(t, name, cur_dir, &node_to_find);
+	if(e != FILE_TREE_SUCCESS){
+		puts(filetree_error_string(e));
+		return NULL;
+	}
+	return node_to_find;
+	
+}
+
+void print_on_error(FileError e)
+{
+	if(e != FILE_TREE_SUCCESS){
+		puts(filetree_error_string(e));
+	}
+}
+
+void filetree_ss(){
+	char input[MAX_STR];
+	t = filetree_new();
+
+	if(!t){
+		status = "FAILURE";
+		percent = "00";
+		intro();
+		printf("filetree_new() not implemented, exiting...\n");
+		exit(1);
+	}
+	intro();
+
+	cur_dir = t->root;
+	FileError e;
+        while(get_input(input) == 0){
+	        char* command = strtok(input, " ");
+		char* arg = strtok(NULL, " ");
+
+	        if(!command) continue;
+
+	        switch(hash(command)){
+			case help:
+				help_f();
+				continue;
+			case quit:
+				quit_f();
+				continue;
+			case mkdir:
+			        name_error("mkdir", "directory name");
+					e = filetree_mkdir(cur_dir, arg);
+			        print_on_error(e);
+			        continue;
+			case rm:
+			        path_error("rm", arg);
+
+				Node* node_to_remove = func_find(arg);
+
+				if(!node_to_remove)
+					continue;
+
+			        e = filetree_rm(node_to_remove);
+					print_on_error(e);
+			        continue;
+			case mv:
+				if(!arg){
+					printf("usage: mv [source] [destination]\n");
+					continue;
+				}
+				char* dest_ = strtok(NULL, " ");
+				if(!dest_){
+					printf("usage: mv [source] [destination]\n");
+					continue;
+				}
+
+				Node* source = func_find(arg);
+				Node* dest = func_find(dest_);
+				
+				if(!(source && dest)){
+					continue;
+				}
+
+				e = filetree_mv(source, (Directory*) dest);
+				print_on_error(e);
+				continue;
+			case print:
+				if(!arg){
+					printf("usage: print [file]\n");
+					continue;
+				}
+				Node * file_node = NULL;
+				e = filetree_resolve_path(t, arg, cur_dir, &file_node);
+				if(e != FILE_TREE_SUCCESS){
+					puts(filetree_error_string(e));
+				}
+				else if(file_node->flags & FILE_TREE_FLAG_DIRECTORY){
+					printf("'%s' is a directory\n", arg);
+				}
+				else{
+					filetree_print_file((File*)file_node);
+				}
+				continue;	
+			case cd:
+			        path_error("cd", arg);
+			        char* path = arg;
+
+			        Node* path_node = NULL;
+                                e = filetree_resolve_path(t, path, cur_dir, &path_node);
+
+			        if(path_node) cur_dir = (Directory*) path_node;
+			        
+					print_on_error(e);
+				if(e == FILE_TREE_SUCCESS){
+					char * absolute_path = filetree_get_path(path_node);
+					if(absolute_path[0] == '\0'){
+						dir[0] = '/';
+						dir[1] = '\0';
+					}
+					else{
+						strcpy(dir, absolute_path);
+					}
+
+					FREE(absolute_path);
+				}
+			        continue;
+
+		        case mkfile:
+				name_error("mkfile", "name");
+	 			char *data = strtok(NULL, "\"");
+				if(!data){
+					printf("usage: mkfile [name] \"[data]\"\n");
+					continue;
+				}
+
+				e = filetree_mkfile(cur_dir, arg, data, strlen(data));
+			        continue;
+
+		        case ls:
+		       	        filetree_ls(cur_dir);
+			        continue;
+			case find:
+		 		filetree_find(cur_dir, arg);
+				continue;		
+		        default:
+			        printf("unknown command\n");
+			        continue;
+	       }
+	      
+	
+       }	       
+}
+
+void filesystem_ss(){
+	puts("filesystem");
+}
+
+
